@@ -1,12 +1,18 @@
-import { Pool, neonConfig } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-serverless';
-import ws from "ws";
-import * as schema from "@shared/schema";
+// db.ts
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import * as schema from '../shared/schema.ts';
+import dotenv from 'dotenv';
+import { log } from 'console';
+dotenv.config();
+// Initialize the PostgreSQL client with your Supabase database URL
+// Ensure you have the DATABASE_URL environment variable set in your .env file
+// or in your environment variables
+console.log(process.env.DATABASE_URL);
 
-neonConfig.webSocketConstructor = ws;
-const DATABASE_URL = process.env.DATABASE_URL;
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable must be set");
+}
 
-
-
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-export const db = drizzle({ client: pool, schema });
+const client = postgres(process.env.DATABASE_URL!); // Use Supabase's DB URL
+export const db = drizzle(client, { schema });

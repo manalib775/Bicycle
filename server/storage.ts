@@ -1,151 +1,148 @@
-import type { Express } from "express";
-import session from "express-session";
-import createMemoryStore from "memorystore";
-import { users, visits, faqs, type User, type InsertUser, type Visit, type FAQ, type InsertFAQ } from "@shared/schema";
-import { db } from "./db";
-import { eq, and, sql } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
+import { db } from './db.ts';
+import {
+  users,
+  visits,
+  faqs,
+  type User,
+  type InsertUser,
+  type Visit,
+  type FAQ,
+  type InsertFAQ,
+} from '@shared/schema';
+import { eq, and, gte, lte, count, asc } from 'drizzle-orm';
 
-declare module "express-session" {
-  interface SessionData {
-    userId?: number;
-    isAdmin?: boolean;
-  }
-}
+const now = () => new Date().toISOString(); // Helper for consistent date formatting
 
-const MemoryStore = createMemoryStore(session);
+const handleError = (error: any, context: string) => {
+  console.error(`${context} - DB Error:`, error.message || error);
+  throw new Error(`DB Error in ${context}: ${error.message || error}`);
+};
 
-export interface IStorage {
-  getUser(id: number): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  recordVisit(visit: Omit<Visit, "id" | "timestamp">): Promise<Visit>;
-  getVisitAnalytics(filters: {
-    startDate?: Date;
-    endDate?: Date;
-    groupBy?: "device" | "platform" | "browser" | "path";
-  }): Promise<{ [key: string]: string | number }[]>;
-  getFaqs(category?: string): Promise<FAQ[]>;
-  createFaq(faq: InsertFAQ): Promise<FAQ>;
-  updateFaq(id: number, updates: Partial<FAQ>): Promise<FAQ>;
-  deleteFaq(id: number): Promise<void>;
-  sessionStore: session.Store;
-}
-
-export class DatabaseStorage implements IStorage {
-  sessionStore: session.Store;
-
-  constructor() {
-    this.sessionStore = new MemoryStore({
-      checkPeriod: 86400000,
-    });
-  }
-
+export class DrizzleStorage {
   async getUser(id: number): Promise<User | undefined> {
-    const result = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, id));
-    return result[0];
+    try {
+      const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      handleError(error, 'getUser');
+    }
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const result = await db
-      .select()
-      .from(users)
-      .where(eq(users.username, username));
-    return result[0];
+    try {
+      const result = await db.select().from(users).where(eq(users.username, username)).limit(1);
+      return result[0];
+    } catch (error) {
+      handleError(error, 'getUserByUsername');
+    }
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const result = await db
-      .insert(users)
-      .values(insertUser)
-      .returning();
-    return result[0];
+  async createUser(user: InsertUser): Promise<User> {
+    try {
+      const result = await db.insert(users).values(user).returning();
+      return result[0];
+    } catch (error) {
+      handleError(error, 'createUser');
+      return undefined as unknown as User;
+    }
   }
 
-  async recordVisit(visitData: Omit<Visit, "id" | "timestamp">): Promise<Visit> {
-    const result = await db
-      .insert(visits)
-      .values(visitData)
-      .returning();
-    return result[0];
+  async recordVisit(visit: Omit<Visit, 'id' | 'timestamp'>): Promise<Visit> {
+    try {
+      const result = await db
+        .insert(visits)
+        .values({ ...visit, timestamp: new Date() })
+        .returning();
+      return result[0];
+    } catch (error) {
+      handleError(error, 'recordVisit');
+      return undefined as unknown as Visit;
+    }
   }
 
   async getVisitAnalytics(filters: {
     startDate?: Date;
     endDate?: Date;
-    groupBy?: "device" | "platform" | "browser" | "path";
+    groupBy?: 'device' | 'platform' | 'browser' | 'path';
   }): Promise<{ [key: string]: string | number }[]> {
-    const conditions: SQL[] = [];
+    const groupBy = filters.groupBy || 'device';
 
-    if (filters.startDate) {
-      conditions.push(sql`${visits.timestamp} >= ${filters.startDate}`);
+    try {
+      let conditions = [];
+
+      if (filters.startDate) {
+        conditions.push(gte(visits.timestamp, filters.startDate));
+      }
+      if (filters.endDate) {
+        conditions.push(lte(visits.timestamp, filters.endDate));
+      }
+
+      const result = await db
+        .select({
+          [groupBy]: visits[groupBy],
+          count: count(visits.id),
+        })
+        .from(visits)
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .groupBy(visits[groupBy]);
+
+      return result.map((item: any) => ({
+        [groupBy]: item[groupBy] ?? 'Unknown',
+        count: item.count ?? 0,
+      }));
+    } catch (error) {
+      handleError(error, 'getVisitAnalytics');
+      return [];
     }
-    if (filters.endDate) {
-      conditions.push(sql`${visits.timestamp} <= ${filters.endDate}`);
-    }
-
-    const groupByColumn = 
-      filters.groupBy === "device" ? visits.deviceType :
-      filters.groupBy === "platform" ? visits.platform :
-      filters.groupBy === "browser" ? visits.browser :
-      filters.groupBy === "path" ? visits.path :
-      visits.deviceType;
-
-    let query = db.select({
-      groupKey: groupByColumn,
-      count: sql<number>`COUNT(*)::int`,
-    })
-    .from(visits);
-
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    const results = await query.groupBy(groupByColumn);
-
-    return results.map(result => ({
-      [filters.groupBy || 'device']: result.groupKey || 'Unknown',
-      count: result.count
-    }));
   }
 
   async getFaqs(category?: string): Promise<FAQ[]> {
-    let query = db.select().from(faqs);
-    if (category) {
-      query = query.where(eq(faqs.category, category));
+    try {
+      const query = db.select().from(faqs).orderBy(asc(faqs.order));
+      if (category) {
+        return await query.where(eq(faqs.category, category));
+      }
+      return await query;
+    } catch (error) {
+      handleError(error, 'getFaqs');
+      return [];
     }
-    return query.orderBy(faqs.order);
   }
 
   async createFaq(faq: InsertFAQ): Promise<FAQ> {
-    const [newFaq] = await db
-      .insert(faqs)
-      .values(faq)
-      .returning();
-    return newFaq;
+    try {
+      const result = await db.insert(faqs).values(faq).returning();
+      return result[0];
+    } catch (error) {
+      handleError(error, 'createFaq');
+      return undefined as unknown as FAQ;
+    }
   }
 
   async updateFaq(id: number, updates: Partial<FAQ>): Promise<FAQ> {
-    const [updated] = await db
-      .update(faqs)
-      .set({ 
-        ...updates, 
-        updatedAt: new Date() 
-      })
-      .where(eq(faqs.id, id))
-      .returning();
-    return updated;
+    try {
+      const result = await db
+        .update(faqs)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(faqs.id, id))
+        .returning();
+      return result[0];
+    } catch (error) {
+      handleError(error, 'updateFaq');
+      return undefined as unknown as FAQ;
+    }
   }
 
   async deleteFaq(id: number): Promise<void> {
-    await db
-      .update(faqs)
-      .set({ isActive: false })
-      .where(eq(faqs.id, id));
+    try {
+      await db
+        .update(faqs)
+        .set({ isActive: false, deletedAt: new Date() })
+        .where(eq(faqs.id, id));
+    } catch (error) {
+      handleError(error, 'deleteFaq');
+    }
   }
 }
 
-export const storage = new DatabaseStorage();
+export const storage = new DrizzleStorage();

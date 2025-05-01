@@ -1,29 +1,30 @@
-import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import session from "express-session";
-import { storage } from "./storage";
-import cors from "cors";
-import helmet from "helmet";
-import compression from "compression";
+import express, { Request, Response, NextFunction } from 'express';
+import { registerRoutes } from './routes';
+import session from 'express-session';
+import { storage } from './storage';
+import cors from  'cors';
+import helmet from 'helmet';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import MemoryStore from 'memorystore';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { setupVite, serveStatic } from "./vite";
-import http from "http";
+import { setupVite, serveStatic } from './vite';
+import http from 'http';
+// Drizzle + DB setup
+import { db } from './db.ts'; // your Drizzle client
+import { healthCheck } from '../shared/schema.ts'; // your pgTable schema
+import { userProfileRoutes } from './routes/userProfile.ts';
 
-// ES Module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-
-// Enable trust proxy for proper header handling behind reverse proxy
 app.set('trust proxy', 1);
 
 console.log('Initializing Express application...');
 
-// Production security middleware
+// Helmet config
 console.log('Configuring security middleware...');
 app.use(helmet({
   contentSecurityPolicy: {
@@ -40,90 +41,88 @@ app.use(helmet({
     },
   },
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
-// Rate limiting
+// Rate limiter
 console.log('Setting up rate limiting...');
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100000,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-// Apply rate limiting to all routes
 app.use(limiter);
 
-// Rest of middleware configuration
 app.use(compression());
-
-// Request size limits
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
-// Configure CORS
+// CORS config
 console.log('Configuring CORS...');
-const corsOptions = {
-  origin: true, // Allow all origins
+app.use(cors({
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-};
-app.use(cors(corsOptions));
+}));
 
-// Session configuration with MemoryStore for testing
+// Session setup
 console.log('Setting up session management...');
 const MemoryStoreSession = MemoryStore(session);
-const sessionConfig = {
-  store: new MemoryStoreSession({
-    checkPeriod: 86400000 // prune expired entries every 24h
-  }),
+app.use(session({
+  store: new MemoryStoreSession({ checkPeriod: 86400000 }),
   secret: process.env.SESSION_SECRET || 'your-secret-key',
   resave: false,
   saveUninitialized: false,
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 * 7, // 1 week
+    maxAge: 1000 * 60 * 60 * 24 * 7,
     sameSite: (process.env.NODE_ENV === 'production' ? 'strict' : 'lax') as 'strict' | 'lax',
-    domain: process.env.NODE_ENV === 'production' ? process.env.DOMAIN : undefined
+    domain: process.env.NODE_ENV === 'production' ? process.env.DOMAIN : undefined,
   }
-};
+}));
 
-app.use(session(sessionConfig));
-
-// Simple logging middleware
+// Simple request logger
 app.use((req, res, next) => {
   const start = Date.now();
-  res.on("finish", () => {
+  res.on('finish', () => {
     const duration = Date.now() - start;
     console.log(`${req.method} ${req.path} ${res.statusCode} in ${duration}ms`);
   });
   next();
 });
 
-// Serve static files from the dist/public directory (Vite's output)
+// Serve static
 app.use(express.static(path.join(__dirname, '../dist/public')));
 
-// Health check endpoint
-app.get('/health', (_req, res) => {
-  res.status(200).json({ status: 'healthy' });
+// Health check using Drizzle
+app.get('/health', async (req: Request, res: Response) => {
+  try {
+    // Perform a simple query, like selecting the first row from any table
+    // console.log(db);
+    
+    const result=await db.select().from(healthCheck).limit(1);
+    res.status(200).json({ status: 'OK' , result});
+    // const result = await db.select().from('health_check').limit(1); // Replace 'your_table_name' with an actual table from your schema
+    console.log('Health check result:', result);;
+  } catch (error) {
+    console.log('Error during health check:', error);
+    // ('Error while connecting to database:', error);
+  }
 });
 
-// Test endpoint
+// Test route
 app.get('/test', (_req, res) => {
   res.json({ message: 'Server is running correctly' });
 });
 
-// Global error handling middleware
+// Global error handler
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error('Error:', err);
-
-  if (res.headersSent) {
-    return next(err);
-  }
+  if (res.headersSent) return next(err);
 
   const status = (err as any).status || 500;
   const message = process.env.NODE_ENV === 'production'
@@ -133,25 +132,22 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(status).json({
     error: {
       message,
-      ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
-    }
+      ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
+    },
   });
 });
 
 const startServer = async () => {
   try {
     console.log('Starting server initialization...');
-
-    // Create HTTP server first
     const server = http.createServer(app);
 
     try {
-      // Register API routes before Vite middleware
       console.log('Registering API routes...');
       await registerRoutes(app);
+      await userProfileRoutes(app);
       console.log('API routes registered successfully');
 
-      // Setup Vite or static serving based on environment
       if (process.env.NODE_ENV !== 'production') {
         console.log('Setting up Vite development server...');
         await setupVite(app, server);
@@ -162,13 +158,10 @@ const startServer = async () => {
         console.log('Static file serving setup complete');
       }
 
-      // Get port from environment or use fallback ports
-      const port = process.env.PORT || 5000;
-
+      const port = 5000;
       server.listen(port, '0.0.0.0', () => {
-        console.log(`Server started successfully on port ${port}`);
-        console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode`);
-        console.log(`Application is ready to accept requests`);
+        console.log(`Server started on port ${port}`);
+        console.log(`Running in ${process.env.NODE_ENV || 'development'} mode`);
       });
 
     } catch (setupError) {
@@ -182,7 +175,6 @@ const startServer = async () => {
   }
 };
 
-// Handle uncaught errors
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
   process.exit(1);
