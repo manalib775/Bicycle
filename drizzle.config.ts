@@ -1,14 +1,25 @@
-import { defineConfig } from "drizzle-kit";
+// drizzle.config.ts
+import * as schema from './shared/schema'; // Adjust the path as necessary
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
+  throw new Error("DATABASE_URL environment variable must be set");
 }
+// console.log(`Using DATABASE_URL: ${process.env.DATABASE_URL}`); // Log the URL for debugging
 
-export default defineConfig({
-  out: "./migrations",
-  schema: "./shared/schema.ts",
-  dialect: "postgresql",
+const config = {
+  schema: './shared/schema.ts', // Use the imported schema
+  out: './server/db/migrations',   // output folder for migrations
   dbCredentials: {
-    url: process.env.DATABASE_URL,
+    host: 'localhost',
+    database: 'mydb',
+    user: 'username',
+    password: 'password',
+    port: 5432, // Ensure this is valid
   },
-});
+  dialect: 'postgresql', // Specify the dialect
+};
+
+export default config; // Directly export the config object
