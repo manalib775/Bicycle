@@ -1,7 +1,8 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, numeric, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Existing tables
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
@@ -21,28 +22,46 @@ export const users = pgTable("users", {
   isAdmin: boolean("isAdmin").default(false),
 });
 
+export const aadhaarVerifications = pgTable("aadhaar_verifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  aadhaarNumber: text("aadhaar_number").notNull().unique(),
+  frontImageUrl: text("front_image_url").notNull(),
+  backImageUrl: text("back_image_url").notNull(),
+  status: text("status").default("pending").notNull(), // e.g., pending / verified / rejected
+  submittedAt: timestamp("submitted_at").defaultNow(),
+});
+
+
 export const bicycles = pgTable("bicycles", {
   id: serial("id").primaryKey(),
-  sellerId: integer("sellerId").notNull(),
+  sellerId: integer("seller_id").notNull().references(()=>users.id),
   category: text("category").notNull(),
-  brand: text("brand").notNull(),
-  model: text("model").notNull(),
-  purchaseYear: integer("purchaseYear").notNull(),
-  price: integer("price").notNull(),
-  gearTransmission: text("gearTransmission").notNull(),
-  frameMaterial: text("frameMaterial").notNull(),
+  brand: text("brand"),
+  model: text("model"),
+  purchaseYear: integer("purchase_year").notNull(),
+  price: numeric("price").notNull(),
+  gearTransmission: text("gear_transmission").notNull(),
+  frameMaterial: text("frame_material").notNull(),
   suspension: text("suspension").notNull(),
   condition: text("condition").notNull(),
-  cycleType: text("cycleType").notNull(),
-  wheelSize: text("wheelSize").notNull(),
-  hasReceipt: boolean("hasReceipt").notNull(),
-  additionalDetails: text("additionalDetails"),
+  cycleType: text("cycle_type").notNull(),
+  wheelSize: text("wheel_size").notNull(),
+  hasReceipt: boolean("has_receipt").default(false),
+  additionalDetails: text("additional_details"),
   images: text("images").array().notNull(),
-  isPremium: boolean("isPremium").default(false),
-  status: text("status").notNull().default('available'),
-  views: integer("views").notNull().default(0),
-  inquiries: integer("inquiries").notNull().default(0),
-  createdAt: timestamp("createdAt").defaultNow(),
+  isPremium: boolean("is_premium").default(false),
+  status: text("status").default("active"),
+  views: integer("views").default(0),
+  inquiries: integer("inquiries").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Add health check table
+export const healthCheck = pgTable("health_check", {
+  id: serial("id").primaryKey(),
+  status: text("status").default("healthy").notNull(),  // Defaulting to "OK"
+  // checkedAt: timestamp("checkedAt").defaultNow().notNull(),
 });
 
 export const visits = pgTable("visits", {
@@ -100,13 +119,45 @@ export const blogTags = pgTable("blog_tags", {
   createdAt: timestamp("createdAt").defaultNow(),
 });
 
+export const bicycleWishlist = pgTable("bicycle_wishlist", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  bicycleId: integer("bicycle_id").notNull().references(() => bicycles.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
 
+// Insert schemas
+export const insertBicycleWishlistSchema = createInsertSchema(bicycleWishlist)
+  .omit({ id: true, createdAt: true })
+  .extend({
+    userId: z.coerce.number(),
+    bicycleId: z.coerce.number(),
+  });
+
+
+/// Insert schemas aadhar
+export const insertAadhaarVerificationSchema = createInsertSchema(aadhaarVerifications)
+  .omit({ id: true, submittedAt: true })
+  .extend({
+    userId: z.coerce.number(), // force convert string to number
+    aadhaarNumber: z
+      .string()
+      .regex(/^\d{12}$/, "Invalid Aadhaar number"),
+    frontImageUrl: z.string().url(),
+    backImageUrl: z.string().url(),
+    status: z.enum(["pending", "verified", "rejected"]).optional(),
+  });
+
+// Insert schemas
 export const insertBicycleSchema = createInsertSchema(bicycles)
   .omit({ id: true, createdAt: true, views: true, inquiries: true })
   .extend({
-    images: z.array(z.string()),
-    price: z.number().min(0, "Price must be positive"),
-    purchaseYear: z.number().min(2000).max(new Date().getFullYear()),
+    images: z.array(z.string().url()).min(1),
+    price: z.coerce.number().min(0, "Price must be positive"),
+    purchaseYear: z.coerce
+      .number()
+      .min(2000)
+      .max(new Date().getFullYear()),
     category: z.enum(["Adult", "Kids"]),
     condition: z.enum(["Fair", "Good", "Like New"]),
     gearTransmission: z.enum(["Non-Geared", "Multi-Speed"]),
@@ -114,14 +165,17 @@ export const insertBicycleSchema = createInsertSchema(bicycles)
     suspension: z.enum(["None", "Front", "Full"]),
     cycleType: z.enum(["Mountain", "Road", "Hybrid", "BMX", "Other"]),
     wheelSize: z.enum(["12", "16", "20", "24", "26", "27.5", "29"]),
+    hasReceipt: z.coerce.boolean().default(false),
+    isPremium: z.coerce.boolean().default(false),
   });
 
-export const insertUserSchema = createInsertSchema(users).extend({
-  confirmPassword: z.string()
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ["confirmPassword"]
-});
+  export const insertUserSchema = createInsertSchema(users)
+  .omit({ id: true })
+  .extend({ confirmPassword: z.string() })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ["confirmPassword"]
+  }); // strips unknown fields like id
 
 export const insertFaqSchema = createInsertSchema(faqs).omit({
   id: true,
@@ -141,7 +195,7 @@ export const insertBlogCategorySchema = createInsertSchema(blogCategories)
 
 export const insertBlogTagSchema = createInsertSchema(blogTags).omit({ id: true, createdAt: true });
 
-
+// Types
 export type InsertBicycle = z.infer<typeof insertBicycleSchema>;
 export type Bicycle = typeof bicycles.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -155,3 +209,6 @@ export type BlogCategory = typeof blogCategories.$inferSelect;
 export type InsertBlogCategory = z.infer<typeof insertBlogCategorySchema>;
 export type BlogTag = typeof blogTags.$inferSelect;
 export type InsertBlogTag = z.infer<typeof insertBlogTagSchema>;
+
+export type AadhaarVerification = typeof aadhaarVerifications.$inferSelect;
+export type InsertAadhaarVerification = z.infer<typeof insertAadhaarVerificationSchema>;
