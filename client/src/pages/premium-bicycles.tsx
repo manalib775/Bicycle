@@ -19,8 +19,8 @@ interface FilterValues {
   maxPrice?: number;
 }
 
-export default function PremiumBicycles() {
-  const [filters, setFilters] = useState<FilterValues>({});
+export default function PremiumBicycles(){
+  const [filters, setFilters] = useState<FilterValues>({minPrice: 15000});
   const [sortBy, setSortBy] = useState("newest");
 
   const { data: bicycles, isLoading } = useQuery<Bicycle[]>({
@@ -38,6 +38,8 @@ export default function PremiumBicycles() {
       if (filters.minPrice) params.append("minPrice", filters.minPrice.toString());
       if (filters.maxPrice) params.append("maxPrice", filters.maxPrice.toString());
       params.append("sortBy", sortBy);
+      const enforcedMinPrice = filters.minPrice && filters.minPrice > 15000 ? filters.minPrice : 15000;
+params.append("minPrice", enforcedMinPrice.toString());
 
       const res = await fetch(`/api/bicycles?${params}`);
       if (!res.ok) throw new Error("Failed to fetch premium bicycles");
@@ -87,6 +89,7 @@ export default function PremiumBicycles() {
           <aside className="md:w-64 flex-shrink-0">
             <h2 className="text-lg font-semibold mb-4">Filter Options</h2>
             <BicycleFilters
+              filters={filters}
               onFilterChange={setFilters}
               onSortChange={setSortBy}
             />

@@ -19,12 +19,11 @@ interface FilterValues {
   maxPrice?: number;
 }
 
-export default function KidsBicycles() {
-  // Initialize filters with default values
+export default function AdultBicycles() {
   const [filters, setFilters] = useState<FilterValues>({
-    minPrice: 0,      // Minimum price is set to 0 (no minimum in this case)
-    maxPrice: 15000,  // Maximum price is set to ₹15,000 (as required)
-    wheelSize: "16",  // Default wheel size is 16 (commonly used for kids bicycles)
+    minPrice: 0,
+    maxPrice: 50000,  // 🎯 Adults can afford bigger budget, adjusted to ₹50,000
+    wheelSize: "26",  // 🎯 Default adult wheel size (26 inch typical for adults)
   });
   const [sortBy, setSortBy] = useState("newest");
 
@@ -46,18 +45,17 @@ export default function KidsBicycles() {
       params.append("sortBy", sortBy);
   
       const res = await fetch(`/api/bicycles?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to fetch kids bicycles");
+      if (!res.ok) throw new Error("Failed to fetch adult bicycles");
       return res.json();
     },
   });
-  
 
   return (
     <div className="min-h-screen bg-background">
       <SEO
-        title="Kids Bicycles for Sale | Safe and Fun Bicycles for Young Riders | Pling"
-        description="Browse our selection of high-quality kids bicycles. Safe, durable, and fun bikes perfect for young riders. Find the perfect bicycle for your child."
-        canonicalUrl="/kids-bicycles"
+        title="Adult Bicycles for Sale | Premium Bicycles for Men & Women | Pling"
+        description="Explore our wide range of adult bicycles. From road bikes to mountain bikes, find the perfect ride for your adventures."
+        canonicalUrl="/adult-bicycles"
         type="website"
       />
       <Navbar />
@@ -66,10 +64,10 @@ export default function KidsBicycles() {
       <div className="relative bg-gradient-to-r from-primary to-primary/80 text-white py-16">
         <div className="container mx-auto px-4">
           <h1 className="text-4xl md:text-6xl font-bold mb-4">
-            Kids Bicycles
+            Adult Bicycles
           </h1>
           <p className="text-lg md:text-xl opacity-90">
-            Safe and fun bicycles for young riders
+            Premium bicycles for your everyday adventures
           </p>
         </div>
       </div>
@@ -82,7 +80,7 @@ export default function KidsBicycles() {
               <a href="/" className="hover:text-primary">Home</a>
               <span className="mx-2">/</span>
             </li>
-            <li className="text-foreground">Kids Bicycles</li>
+            <li className="text-foreground">Adult Bicycles</li>
           </ol>
         </nav>
       </div>
@@ -104,10 +102,10 @@ export default function KidsBicycles() {
           <main className="flex-1">
             <div className="mb-6">
               <h2 className="text-2xl font-semibold">
-                Available Kids Bicycles
+                Available Adult Bicycles
               </h2>
               <p className="text-muted-foreground">
-                Quality bicycles for children of all ages
+                Quality bicycles for men and women
               </p>
             </div>
 
@@ -118,11 +116,13 @@ export default function KidsBicycles() {
             ) : error ? (
               <div className="text-center py-12">
                 <h3 className="text-xl font-semibold mb-2">Error Loading Data</h3>
-                <p className="text-muted-foreground">There was an issue fetching the bicycle data. Please try again later.</p>
+                <p className="text-muted-foreground">
+                  There was an issue fetching the bicycle data. Please try again later.
+                </p>
               </div>
             ) : bicycles?.length === 0 ? (
               <div className="text-center py-12">
-                <h3 className="text-xl font-semibold mb-2">No Kids Bicycles Found</h3>
+                <h3 className="text-xl font-semibold mb-2">No Adult Bicycles Found</h3>
                 <p className="text-muted-foreground">
                   Try adjusting your filters or check back later for new listings
                 </p>

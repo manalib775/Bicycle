@@ -1,4 +1,6 @@
 import { Helmet } from 'react-helmet';
+// import { config } from 'dotenv';
+// config();
 
 interface SEOProps {
   title?: string;
@@ -17,7 +19,7 @@ export default function SEO({
   type = 'website',
   schema
 }: SEOProps) {
-  const siteUrl = process.env.VITE_SITE_URL || 'https://pling.com';
+  const siteUrl = import.meta.env.VITE_SITE_URL || 'https://pling.com';
   const fullUrl = canonicalUrl ? `${siteUrl}${canonicalUrl}` : siteUrl;
 
   const defaultSchema = {

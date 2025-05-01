@@ -6,41 +6,103 @@ import { useToast } from "@/hooks/use-toast";
 import { Heart, Share2, Phone, ArrowLeft } from "lucide-react";
 import { useWishlist } from "@/hooks/use-wishlist";
 import BicycleImageCarousel from "@/components/bicycle-image-carousel";
-import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Navbar from "@/components/navbar";
-import SEO from "@/components/seo";
+import { useEffect } from "react";
+
+// Type guard for Bicycle
+function isBicycle(data: unknown): data is Bicycle {
+  if (!data || typeof data !== 'object') return false;
+  const bicycle = data as Partial<Bicycle>;
+  
+  return (
+    typeof bicycle.id === 'number' &&
+    typeof bicycle.brand === 'string' &&
+    typeof bicycle.model === 'string' &&
+    typeof bicycle.price === 'string' && 
+    typeof bicycle.purchaseYear === 'number' &&
+    typeof bicycle.category === 'string' &&
+    typeof bicycle.condition === 'string' &&
+    Array.isArray(bicycle.images) &&
+    bicycle.images.every(image => typeof image === 'string')
+  );
+}
+
+// Logger
+const logger = {
+  info: (message: string, data?: unknown) => console.info(`[INFO] ${message}`, data),
+  error: (message: string, error?: unknown) => console.error(`[ERROR] ${message}`, error),
+  warn: (message: string, data?: unknown) => console.warn(`[WARN] ${message}`, data),
+};
 
 export default function BicycleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
   const { addToWishlist, removeFromWishlist, isInWishlist } = useWishlist();
 
-  const { data: bicycle, isLoading, error } = useQuery<Bicycle>({
-    queryKey: ["/api/bicycles", parseInt(id)],
-    enabled: !!id && !isNaN(parseInt(id)),
+  const parsedId = id ? parseInt(id) : NaN;
+  const isValidId = !isNaN(parsedId) && parsedId > 0;
+
+  const {
+    data: bicycleResponse,
+    isLoading,
+    error,
+    isError
+  } = useQuery<unknown, Error>({
+    queryKey: ["bicycles", parsedId],
+    enabled: isValidId,
     retry: 1,
     queryFn: async () => {
-      const res = await fetch(`/api/bicycles/${id}`);
-      if (!res.ok) throw new Error('Failed to fetch bicycle');
-      return res.json();
-    }
+      logger.info(`Fetching bicycle with ID: ${parsedId}`);
+      try {
+        const res = await fetch(`/api/bicycle/details/${parsedId}`);
+        if (!res.ok) {
+          const errorMessage = `Failed to fetch bicycle: ${res.status} ${res.statusText}`;
+          logger.error(errorMessage);
+          throw new Error(errorMessage);
+        }
+        const result = await res.json();
+        logger.info("Bicycle data fetched successfully", result);
+
+        // Accessing the 'data' key
+        return result.data;
+      } catch (err) {
+        logger.error("Error fetching bicycle data", err);
+        throw err;
+      }
+    },
   });
 
-  const { data: similarBicycles } = useQuery<Bicycle[]>({
-    queryKey: ["/api/bicycles"],
-    enabled: !!bicycle,
-  });
+  // Debugging: log the fetched data
+  useEffect(() => {
+    logger.info("Fetched bicycle data:", bicycleResponse);
+  }, [bicycleResponse]);
+
+  const bicycle: Bicycle | null = isBicycle(bicycleResponse) ? bicycleResponse : null;
+
+  useEffect(() => {
+    if (bicycleResponse && !bicycle) {
+      logger.warn("Received data does not match Bicycle type", bicycleResponse);
+    }
+  }, [bicycleResponse, bicycle]);
 
   const handleShare = async () => {
-    if (!bicycle) return;
+    if (!bicycle) {
+      logger.warn("Share attempted without bicycle data");
+      return;
+    }
+
+    const title = `${bicycle.brand || ''} ${bicycle.model || ''}`.trim() || "Bicycle on Pling";
+    const shareText = `Check out this ${title} on Pling!`;
+    const shareUrl = window.location.href;
+
+    logger.info("Sharing bicycle", { title, shareText, shareUrl });
+
     try {
-      await navigator.share({
-        title: `${bicycle.brand} ${bicycle.model}`,
-        text: `Check out this ${bicycle.brand} ${bicycle.model} on Pling!`,
-        url: window.location.href,
-      });
+      await navigator.share({ title, text: shareText, url: shareUrl });
+      logger.info("Share successful");
     } catch (error) {
+      logger.error("Share failed", error);
       toast({
         title: "Share failed",
         description: "Could not share this bicycle",
@@ -50,10 +112,74 @@ export default function BicycleDetailPage() {
   };
 
   const handleContact = () => {
+    if (!bicycle) {
+      logger.warn("Contact attempted without bicycle data");
+      return;
+    }
+
+    logger.info("Contact seller initiated", { bicycleId: bicycle.id });
     toast({
       title: "Contact Request Sent",
       description: "The seller will be notified of your interest. They will contact you soon.",
     });
+  };
+
+  const handleWishlistToggle = () => {
+    if (!bicycle) {
+      logger.warn("Wishlist toggle attempted without bicycle data");
+      return;
+    }
+
+    const bicycleId = bicycle.id;
+    const isCurrentlyInWishlist = isInWishlist(bicycleId);
+
+    logger.info("Wishlist toggle", {
+      bicycleId,
+      action: isCurrentlyInWishlist ? "remove" : "add"
+    });
+
+    if (isCurrentlyInWishlist) {
+      removeFromWishlist(bicycleId);
+    } else {
+      addToWishlist(bicycleId);
+    }
+  };
+
+  const generateProductSchema = (bicycle: Bicycle): ProductSchema => {
+    logger.info("Generating product schema");
+
+    const brand = bicycle.brand || "Unknown Brand";
+    const model = bicycle.model || "Unknown Model";
+    const name = `${brand} ${model}`.trim();
+
+    const condition = bicycle.condition || "Used";
+    const cycleType = bicycle.cycleType || "bicycle";
+    const description = bicycle.additionalDetails || `${condition} ${cycleType} bicycle`;
+
+    const schemaObj: ProductSchema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name,
+      description,
+      image: bicycle.images?.[0],
+      offers: {
+        "@type": "Offer",
+        price: bicycle.price,
+        priceCurrency: "INR",
+        availability: bicycle.status === "active" ? "InStock" : "OutOfStock",
+        condition: `https://schema.org/${condition.replace(/\s+/g, "")}`,
+      },
+      brand: {
+        "@type": "Brand",
+        name: brand,
+      },
+    };
+
+    if (bicycle.purchaseYear) {
+      schemaObj.productionDate = bicycle.purchaseYear.toString();
+    }
+
+    return schemaObj;
   };
 
   const LoadingOrError = ({ isLoading, error }: { isLoading: boolean; error: unknown }) => (
@@ -70,7 +196,11 @@ export default function BicycleDetailPage() {
           ) : (
             <div className="text-center">
               <h1 className="text-2xl font-bold mb-4">Error Loading Bicycle</h1>
-              <p className="text-muted-foreground">Unable to load bicycle details. Please try again later.</p>
+              <p className="text-muted-foreground">
+                {error instanceof Error
+                  ? error.message
+                  : "Unable to load bicycle details. Please try again later."}
+              </p>
             </div>
           )}
         </div>
@@ -78,45 +208,12 @@ export default function BicycleDetailPage() {
     </div>
   );
 
-  const generateProductSchema = (bicycle: Bicycle) => ({
-    '@context': 'https://schema.org',
-    '@type': 'Product',
-    name: `${bicycle.brand} ${bicycle.model}`,
-    description: bicycle.additionalDetails || `${bicycle.condition} ${bicycle.cycleType} bicycle`,
-    image: bicycle.images[0],
-    offers: {
-      '@type': 'Offer',
-      price: bicycle.price,
-      priceCurrency: 'INR',
-      availability: bicycle.status === 'available' ? 'InStock' : 'OutOfStock',
-      condition: `https://schema.org/${bicycle.condition.replace(' ', '')}`,
-    },
-    brand: {
-      '@type': 'Brand',
-      name: bicycle.brand
-    },
-    productionDate: bicycle.purchaseYear.toString(),
-  });
-
-  if (isLoading || error || !bicycle) {
+  if (isLoading || isError || !bicycle) {
     return <LoadingOrError isLoading={isLoading} error={error} />;
   }
 
-  const filteredSimilarBicycles = similarBicycles?.filter(b => 
-    b.id !== bicycle.id && 
-    b.category === bicycle.category
-  ).slice(0, 4);
-
   return (
     <div className="min-h-screen bg-background">
-      <SEO
-        title={`${bicycle.brand} ${bicycle.model} - ${bicycle.condition} ${bicycle.cycleType} Bicycle | Pling`}
-        description={`${bicycle.condition} ${bicycle.cycleType} bicycle. ${bicycle.brand} ${bicycle.model}, ${bicycle.purchaseYear}. ${bicycle.additionalDetails || ''}`}
-        canonicalUrl={`/bicycles/${bicycle.id}`}
-        imageUrl={bicycle.images[0]}
-        type="product"
-        schema={generateProductSchema(bicycle)}
-      />
       <Navbar />
       <main className="container mx-auto px-4 py-6 md:py-8">
         <Link href="/" className="inline-flex items-center text-sm mb-6 hover:text-primary">
@@ -124,135 +221,59 @@ export default function BicycleDetailPage() {
           Back to listings
         </Link>
 
-        {bicycle ? (
-          <div className="grid md:grid-cols-2 gap-6 md:gap-8">
-            {/* Left Column - Images */}
-            <div>
-              <BicycleImageCarousel images={bicycle.images} thumbnailSize={false} />
-            </div>
+        <div className="grid md:grid-cols-2 gap-6 md:gap-8">
+          <div>
+            <BicycleImageCarousel images={bicycle.images ?? []} thumbnailSize={false} />
+          </div>
 
-            {/* Right Column - Details */}
-            <div className="space-y-6">
+          <div className="space-y-6">
+            <div className="flex items-start justify-between">
               <div>
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h1 className="text-2xl md:text-3xl font-bold">
-                      {bicycle.brand} {bicycle.model}
-                    </h1>
-                    <p className="text-xl md:text-2xl font-semibold mt-2">
-                      ₹{bicycle.price?.toLocaleString() ?? 'Price not available'}
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    <Button 
-                      variant="outline" 
-                      size="icon"
-                      onClick={handleShare}
-                    >
-                      <Share2 className="h-5 w-5" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => {
-                        if (isInWishlist(bicycle.id)) {
-                          removeFromWishlist(bicycle.id);
-                        } else {
-                          addToWishlist(bicycle.id);
-                        }
-                      }}
-                    >
-                      <Heart
-                        className={`h-5 w-5 ${
-                          isInWishlist(bicycle.id) ? "fill-red-500 text-red-500" : ""
-                        }`}
-                      />
-                    </Button>
-                  </div>
-                </div>
+                <h1 className="text-2xl md:text-3xl font-bold">
+                  {bicycle.brand || ''} {bicycle.model || ''}
+                </h1>
+                <p className="text-xl md:text-2xl font-semibold mt-2">
+                  ₹{bicycle.price?.toLocaleString() ?? "Price not available"}
+                </p>
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground">Category</p>
-                  <p className="font-medium">{bicycle.category}</p>
-                </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground">Year</p>
-                  <p className="font-medium">{bicycle.purchaseYear}</p>
-                </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground">Transmission</p>
-                  <p className="font-medium">{bicycle.gearTransmission}</p>
-                </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground">Frame</p>
-                  <p className="font-medium">{bicycle.frameMaterial}</p>
-                </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground">Suspension</p>
-                  <p className="font-medium">{bicycle.suspension}</p>
-                </div>
-                <div className="p-3 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground">Condition</p>
-                  <Badge variant={
-                    bicycle.condition === "Like New" ? "default" :
-                    bicycle.condition === "Good" ? "secondary" :
-                    "outline"
-                  }>
-                    {bicycle.condition}
-                  </Badge>
-                </div>
+              <div className="flex gap-3">
+                <Button variant="outline" size="icon" onClick={handleShare}>
+                  <Share2 className="h-5 w-5" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={handleWishlistToggle}>
+                  <Heart
+                    className={`h-5 w-5 ${isInWishlist(bicycle.id) ? "fill-red-500 text-red-500" : ""}`}
+                  />
+                </Button>
               </div>
-
-              {bicycle.additionalDetails && (
-                <Card className="p-4">
-                  <h2 className="font-semibold mb-2">Additional Details</h2>
-                  <p className="text-sm text-muted-foreground">{bicycle.additionalDetails}</p>
-                </Card>
-              )}
-
-              <Button 
-                size="lg"
-                className="w-full"
-                onClick={handleContact}
-              >
-                <Phone className="mr-2 h-5 w-5" />
-                Contact Seller
-              </Button>
             </div>
-          </div>
-        ) : (
-          <LoadingOrError isLoading={isLoading} error={error} />
-        )}
 
-        {/* Similar Bicycles */}
-        {filteredSimilarBicycles && filteredSimilarBicycles.length > 0 && (
-          <div className="mt-12">
-            <h2 className="text-2xl font-bold mb-6">Similar Bicycles</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {filteredSimilarBicycles.map(similarBicycle => (
-                <Link 
-                  key={similarBicycle.id} 
-                  href={`/bicycles/${similarBicycle.id}`}
-                >
-                  <Card className="hover:shadow-lg transition-shadow cursor-pointer h-full">
-                    <div className="p-4">
-                      <BicycleImageCarousel images={similarBicycle.images} />
-                      <h3 className="mt-4 font-semibold">
-                        {similarBicycle.brand} {similarBicycle.model}
-                      </h3>
-                      <p className="text-lg font-semibold mt-2">
-                        ₹{similarBicycle.price.toLocaleString()}
-                      </p>
-                    </div>
-                  </Card>
-                </Link>
-              ))}
+            <div className="grid grid-cols-2 gap-4">
+              <DetailItem label="Category" value={bicycle.category} />
+              <DetailItem
+                label="Year"
+                value={bicycle.purchaseYear ? bicycle.purchaseYear.toString() : undefined}
+              />
+              <DetailItem label="Transmission" value={bicycle.gearTransmission} />
+              <DetailItem label="Frame" value={bicycle.frameMaterial} />
+              <DetailItem label="Suspension" value={bicycle.suspension} />
             </div>
+
+            <Button onClick={handleContact}>
+              <Phone className="mr-2 h-4 w-4" /> Contact Seller
+            </Button>
           </div>
-        )}
+        </div>
       </main>
+    </div>
+  );
+}
+
+function DetailItem({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="p-3 bg-muted rounded-lg">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <p className="font-medium">{value ?? "N/A"}</p>
     </div>
   );
 }

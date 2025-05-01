@@ -39,7 +39,7 @@ export default function BicycleImageCarousel({
               height={thumbnailSize ? "192" : "384"}
               className="absolute w-full h-full object-cover"
               onError={(e) => {
-                e.currentTarget.src = '/images/placeholder.svg';
+                e.currentTarget.src = 'assets/images/image1.jpg';
                 e.currentTarget.alt = 'Image failed to load';
               }}
             />

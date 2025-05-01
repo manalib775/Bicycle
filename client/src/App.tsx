@@ -16,7 +16,8 @@ import ProfilePage from "@/pages/profile-page";
 import BlogPage from "@/pages/blog-page";
 import { ProtectedRoute } from "./lib/protected-route";
 import { initGA, usePageTracking } from "./lib/analytics";
-
+import AdultBicycles from "./pages/adult-bicycles";
+import { UserVerificationForm } from "./pages/user-verification";
 function Router() {
   // Track page views
   usePageTracking();
@@ -26,9 +27,11 @@ function Router() {
       <Route path="/" component={HomePage} />
       <Route path="/auth" component={AuthPage} />
       <Route path="/premium" component={PremiumBicycles} />
-      <Route path="/kids" component={KidsBicycles} />
+      <Route path="/Kids" component={KidsBicycles} />
+      <Route path="/Adult" component={AdultBicycles} />
       <Route path="/blog" component={BlogPage} />
-      <ProtectedRoute path="/sell" component={SellPage} />
+      <ProtectedRoute path="/sell" component={SellPage}/>
+      <ProtectedRoute path="/verify-aadhaar" component={UserVerificationForm} />
       <ProtectedRoute path="/profile" component={ProfilePage} />
       <Route path="/bicycles/:id" component={BicycleDetailPage} />
       <Route component={NotFound} />

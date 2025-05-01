@@ -76,10 +76,10 @@ export default function Navbar() {
             <Link href="/premium">
               <a className="text-sm font-medium hover:text-primary">Premium Bicycles</a>
             </Link>
-            <Link href="/?category=Adult">
+            <Link href="/Adult">
               <a className="text-sm font-medium hover:text-primary">Adult Bicycles</a>
             </Link>
-            <Link href="/?category=Kids">
+            <Link href="/Kids">
               <a className="text-sm font-medium hover:text-primary">Kids Bicycles</a>
             </Link>
             <Link href="/certified">

@@ -1,11 +1,14 @@
+"use client";
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from "@/hooks/use-auth";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SiGoogle } from "react-icons/si";
@@ -17,10 +20,28 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { toast } from "sonner";
 
 export default function AuthPage() {
   const [, setLocation] = useLocation();
-  const { user, loginMutation, registerMutation, googleSignInMutation } = useAuth();
+  const {
+    user,
+    loginMutation,
+    registerMutation,
+    googleSignInMutation,
+    handleGoogleCallback,
+  } = useAuth();
+  const [otpSent, setOtpSent] = useState(false);
+  const [registrationData, setRegistrationData] = useState<InsertUser | null>(null);
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<"login" | "register">("login");
 
   const loginForm = useForm<Pick<InsertUser, "username" | "password">>({
     defaultValues: {
@@ -31,17 +52,30 @@ export default function AuthPage() {
 
   const registerForm = useForm<InsertUser>({
     resolver: zodResolver(insertUserSchema),
+    mode: "onChange",
     defaultValues: {
-      username: "",
-      password: "",
-      confirmPassword: "",
       firstName: "",
       lastName: "",
+      username: "",
       email: "",
       mobile: "",
       city: "",
       subCity: "",
-      cyclingProficiency: "occasional",
+      cyclingProficiency: "",
+      password: "",
+      confirmPassword: "",
+      type: "user",
+    },
+  });
+
+  const otpForm = useForm({
+    resolver: zodResolver(
+      z.object({
+        otp: z.string().min(4, "OTP is required"),
+      })
+    ),
+    defaultValues: {
+      otp: "",
     },
   });
 
@@ -49,27 +83,123 @@ export default function AuthPage() {
     if (user) {
       setLocation("/");
     }
-  }, [user, setLocation]);
+
+    // Handle Google OAuth redirect with callback
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (token) {
+      handleGoogleCallback(token);
+    }
+  }, [user, setLocation, handleGoogleCallback]);
 
   const onLogin = (data: Pick<InsertUser, "username" | "password">) => {
     loginMutation.mutate(data);
   };
 
-  const onRegister = (data: InsertUser) => {
-    registerMutation.mutate(data);
+  const onRegisterSubmit = async (data: InsertUser) => {
+    setRegistrationData(data);
+    try {
+      const response = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...data, isVerifyingOtp: false }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        toast({
+          title: "Error",
+          description: result.message || "Failed to send OTP",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      toast({
+        title: "Success",
+        description: result.message || "OTP sent to your email",
+      });
+
+      setOtpSent(true);
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Error",
+        description: "Something went wrong",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const onOtpSubmit = async (otpData: { otp: string }) => {
+    if (!registrationData) {
+      toast({
+        title: "Error",
+        description: "Registration data not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...registrationData,
+          isVerifyingOtp: true,
+          otp: otpData.otp,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        toast({
+          title: "Error",
+          description: result.message || "OTP verification failed",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      toast({
+        title: "Success",
+        description: "Registration complete. You can now log in.",
+      });
+
+      setOtpSent(false);
+      setRegistrationData(null);
+      navigate("/auth");
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Error",
+        description: "OTP verification failed",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const resetRegistration = () => {
+    setOtpSent(false);
+    setRegistrationData(null);
+    otpForm.reset();
+    // setLocation("/")
   };
 
   return (
     <div className="min-h-screen grid md:grid-cols-2">
-      {/* Left Column - Forms */}
       <div className="flex items-center justify-center p-8">
         <Card className="w-full max-w-md p-6">
           <Tabs defaultValue="login">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-2 mb-6">
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="register">Register</TabsTrigger>
             </TabsList>
 
+            {/* Login Tab */}
             <TabsContent value="login">
               <Form {...loginForm}>
                 <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
@@ -99,195 +229,264 @@ export default function AuthPage() {
                       </FormItem>
                     )}
                   />
-                  <Button 
-                    type="submit" 
-                    className="w-full"
-                    disabled={loginMutation.isPending}
-                  >
+                  <Button type="submit" className="w-full" disabled={loginMutation.isPending}>
                     Login
                   </Button>
                 </form>
               </Form>
 
-              {/* Google Sign-in Button */}
-              <div className="mt-4">
-                <div className="relative">
+              <div className="mt-6">
+                <div className="relative mb-4">
                   <div className="absolute inset-0 flex items-center">
                     <span className="w-full border-t" />
                   </div>
                   <div className="relative flex justify-center text-xs uppercase">
                     <span className="bg-background px-2 text-muted-foreground">
-                      Or continue with
+                      or continue with
                     </span>
                   </div>
                 </div>
-
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full mt-4"
+                  className="w-full"
                   onClick={() => googleSignInMutation.mutate()}
                   disabled={googleSignInMutation.isPending}
                 >
                   <SiGoogle className="mr-2 h-4 w-4" />
-                  Sign in with Google
+                  Google
                 </Button>
               </div>
             </TabsContent>
 
+            {/* Register Tab */}
             <TabsContent value="register">
-              <Form {...registerForm}>
-                <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+              {otpSent ? (
+                <Form {...otpForm}>
+                  <form onSubmit={otpForm.handleSubmit(onOtpSubmit)} className="space-y-4">
                     <FormField
-                      control={registerForm.control}
-                      name="firstName"
+                      control={otpForm.control}
+                      name="otp"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>First Name</FormLabel>
+                          <FormLabel>OTP</FormLabel>
                           <FormControl>
-                            <Input {...field} />
+                            <Input {...field} placeholder="Enter OTP sent to your email" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
-                    <FormField
-                      control={registerForm.control}
-                      name="lastName"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Last Name</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <FormField
-                    control={registerForm.control}
-                    name="username"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Username</FormLabel>
-                        <FormControl>
-                          <Input {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={registerForm.control}
-                    name="email"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email</FormLabel>
-                        <FormControl>
-                          <Input type="email" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={registerForm.control}
-                    name="mobile"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Mobile</FormLabel>
-                        <FormControl>
-                          <Input {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={registerForm.control}
-                    name="password"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Password</FormLabel>
-                        <FormControl>
-                          <Input type="password" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={registerForm.control}
-                    name="confirmPassword"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Confirm Password</FormLabel>
-                        <FormControl>
-                          <Input type="password" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <Button 
-                    type="submit" 
-                    className="w-full"
-                    disabled={registerMutation.isPending}
+                    <div className="flex gap-2 mt-4">
+                      <Button variant="outline" className="flex-1" onClick={resetRegistration}>
+                        Back
+                      </Button>
+                      <Button type="submit" className="flex-1">
+                        Verify & Register
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
+              ) : (
+                <Form {...registerForm}>
+                  <form
+                    onSubmit={registerForm.handleSubmit(onRegisterSubmit)}
+                    className="space-y-4"
                   >
-                    Register
+                    {/* All fields same as your original code... */}
+
+                    {/* Add your registration fields here just like your original code... */}
+                    <div className="grid grid-cols-2 gap-4">
+                       <FormField
+                        control={registerForm.control}
+                        name="firstName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>First Name</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={registerForm.control}
+                        name="lastName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Last Name</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={registerForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email</FormLabel>
+                          <FormControl>
+                            <Input type="email" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    
+                    <FormField
+                      control={registerForm.control}
+                      name="username"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Username (Optional)</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Default is your email" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={registerForm.control}
+                      name="mobile"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Mobile Number</FormLabel>
+                          <FormControl>
+                            <Input {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={registerForm.control}
+                        name="city"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>City</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={registerForm.control}
+                        name="subCity"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Sub-city</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={registerForm.control}
+                      name="cyclingProficiency"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Cycling Proficiency</FormLabel>
+                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="beginner">Beginner</SelectItem>
+                              <SelectItem value="occasional">Occasional</SelectItem>
+                              <SelectItem value="expert">Expert</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={registerForm.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Password</FormLabel>
+                          <FormControl>
+                            <Input type="password" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={registerForm.control}
+                      name="confirmPassword"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Confirm Password</FormLabel>
+                          <FormControl>
+                            <Input type="password" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <Button type="submit" className="w-full">
+                      Request OTP
+                    </Button>
+                  </form>
+                </Form>
+              )}
+              {!otpSent && (
+                <div className="mt-6">
+                  <div className="relative mb-4">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-background px-2 text-muted-foreground">
+                        or sign up with
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => googleSignInMutation.mutate()}
+                    disabled={googleSignInMutation.isPending}
+                  >
+                    <SiGoogle className="mr-2 h-4 w-4" />
+                    Google
                   </Button>
-                </form>
-              </Form>
-
-              {/* Google Sign-in Button for Register */}
-              <div className="mt-4">
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t" />
-                  </div>
-                  <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-background px-2 text-muted-foreground">
-                      Or sign up with
-                    </span>
-                  </div>
                 </div>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full mt-4"
-                  onClick={() => googleSignInMutation.mutate()}
-                  disabled={googleSignInMutation.isPending}
-                >
-                  <SiGoogle className="mr-2 h-4 w-4" />
-                  Continue with Google
-                </Button>
-              </div>
+              )}
             </TabsContent>
           </Tabs>
         </Card>
       </div>
 
-      {/* Right Column - Hero */}
+      {/* Right Side: Hero */}
       <div className="hidden md:flex bg-primary text-white flex-col justify-center p-12">
         <h1 className="text-4xl font-bold mb-6">Welcome to Pling!</h1>
-        <p className="text-lg mb-8">
-          Join our community of cycling enthusiasts. Buy and sell second-hand bicycles with
-          confidence.
+        <p className="text-lg">
+          Join the cycling revolution. Login or register to start your journey.
         </p>
-        <ul className="space-y-4">
-          <li className="flex items-center gap-2">
-            ✓ Verified sellers
-          </li>
-          <li className="flex items-center gap-2">
-            ✓ Secure transactions
-          </li>
-          <li className="flex items-center gap-2">
-            ✓ Premium bicycles
-          </li>
-        </ul>
       </div>
     </div>
   );
